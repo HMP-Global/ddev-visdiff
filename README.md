@@ -166,6 +166,16 @@ The DDEV add-on uses Playwright Firefox by default because the bundled Chromium 
 
 Supported values are `chromium`, `firefox`, and `webkit`. By default, visible video elements must load a frame before screenshots are captured. This prevents a page with a blank hero video from passing only because both live and local failed to render the same media.
 
+Full-page screenshots scroll through the page before capture so lazy-loaded, animated, and parallax sections can initialize. The renderer also stabilizes common scroll animation markup, such as AOS, so below-the-fold sections are visible in the final screenshot. If a project needs true viewport-by-viewport stitching, enable it explicitly:
+
+```json
+{
+  "stitchFullPage": true,
+  "scrollDelayMs": 250,
+  "hideRepeatedFixedElements": true
+}
+```
+
 ## Production Content Refresh
 
 Preparation commands run inside the DDEV `visdiff` service.

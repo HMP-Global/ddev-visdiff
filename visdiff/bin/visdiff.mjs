@@ -52,6 +52,12 @@ const defaultConfig = {
   threshold: 0.01,
   waitUntil: 'networkidle',
   fullPage: true,
+  stitchFullPage: false,
+  scrollDelayMs: 250,
+  warmFullPage: true,
+  stabilizeScrollAnimations: true,
+  hideRepeatedFixedElements: true,
+  repeatedFixedElementMaxHeightRatio: 0.25,
   waitForMedia: true,
   mediaTimeoutMs: 10000,
   freezeMedia: true,
@@ -638,16 +644,12 @@ async function capturePage(browser, url, outputPath, viewport, config, headers =
       await page.waitForTimeout(config.extraWaitMs);
     }
 
-    await waitForMedia(page, config);
     await hideSelectors(page, config.hideSelectors || []);
     await maskSelectors(page, config.ignoreSelectors || []);
 
-    await screenshotWithRetry(page, {
-      path: outputPath,
-      fullPage: config.fullPage !== false,
-      animations: 'disabled',
-      caret: 'hide'
-    });
+    await preparePageForScreenshot(page, config);
+    await waitForMedia(page, config);
+    await captureScreenshot(page, outputPath, config);
 
     return {
       status: response?.status?.() || null
@@ -795,6 +797,79 @@ async function maskSelectors(page, selectors) {
   });
 }
 
+async function captureScreenshot(page, outputPath, config) {
+  const fullPage = config.fullPage !== false;
+  if (fullPage && config.stitchFullPage !== false) {
+    await stitchedScreenshotWithRetry(page, outputPath, config);
+    return;
+  }
+
+  await screenshotWithRetry(page, {
+    path: outputPath,
+    fullPage,
+    animations: 'disabled',
+    caret: 'hide'
+  });
+}
+
+async function preparePageForScreenshot(page, config) {
+  if (config.fullPage !== false && config.warmFullPage !== false) {
+    await warmScrollPage(page, config);
+  }
+
+  if (config.stabilizeScrollAnimations !== false) {
+    await stabilizeScrollAnimations(page);
+  }
+}
+
+async function warmScrollPage(page, config) {
+  const viewport = page.viewportSize();
+  if (!viewport) return;
+
+  const height = await page.evaluate(() => {
+    const body = document.body;
+    const html = document.documentElement;
+    return Math.ceil(Math.max(
+      body?.scrollHeight || 0,
+      body?.offsetHeight || 0,
+      html.scrollHeight,
+      html.offsetHeight,
+      html.clientHeight,
+      window.innerHeight
+    ));
+  });
+  const delayMs = Math.max(0, Number(config.scrollDelayMs) || 0);
+
+  for (const scrollY of scrollPositions(Math.max(height, viewport.height), viewport.height)) {
+    await page.evaluate((value) => window.scrollTo(0, value), scrollY);
+    await waitForScrollSettled(page, delayMs);
+  }
+
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await waitForScrollSettled(page, delayMs);
+}
+
+async function stabilizeScrollAnimations(page) {
+  await page.addStyleTag({
+    content: `
+      html { scroll-behavior: auto !important; }
+      [data-aos], .aos-init {
+        opacity: 1 !important;
+        transform: none !important;
+        transition-delay: 0s !important;
+        transition-duration: 0s !important;
+      }
+    `
+  });
+
+  await page.evaluate(() => {
+    document.querySelectorAll('[data-aos], .aos-init').forEach((element) => {
+      element.classList.add('aos-animate');
+    });
+    window.dispatchEvent(new Event('scroll'));
+  });
+}
+
 async function screenshotWithRetry(page, options) {
   let lastError;
 
@@ -809,6 +884,145 @@ async function screenshotWithRetry(page, options) {
   }
 
   throw lastError;
+}
+
+async function stitchedScreenshotWithRetry(page, outputPath, config) {
+  let lastError;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await stitchFullPageScreenshot(page, outputPath, config);
+      return;
+    } catch (error) {
+      lastError = error;
+      await page.waitForTimeout(250);
+    }
+  }
+
+  throw lastError;
+}
+
+async function stitchFullPageScreenshot(page, outputPath, config) {
+  const viewport = page.viewportSize();
+  if (!viewport) {
+    throw new Error('Unable to stitch screenshot because the page viewport is unavailable.');
+  }
+
+  await page.addStyleTag({
+    content: 'html { scroll-behavior: auto !important; }'
+  });
+
+  const dimensions = await page.evaluate(() => {
+    const body = document.body;
+    const html = document.documentElement;
+    return {
+      height: Math.ceil(Math.max(
+        body?.scrollHeight || 0,
+        body?.offsetHeight || 0,
+        html.scrollHeight,
+        html.offsetHeight,
+        html.clientHeight,
+        window.innerHeight
+      ))
+    };
+  });
+
+  const width = viewport.width;
+  const height = Math.max(dimensions.height, viewport.height);
+  const stitched = new PNG({ width, height });
+  const delayMs = Math.max(0, Number(config.scrollDelayMs) || 0);
+
+  await markRepeatedFixedElements(page, config);
+
+  for (const scrollY of scrollPositions(height, viewport.height)) {
+    await page.evaluate((value) => window.scrollTo(0, value), scrollY);
+    await waitForScrollSettled(page, delayMs);
+    await setRepeatedFixedElementsHidden(page, scrollY > 0 && config.hideRepeatedFixedElements !== false);
+    await waitForMedia(page, config);
+
+    const buffer = await page.screenshot({
+      fullPage: false,
+      animations: 'disabled',
+      caret: 'hide'
+    });
+    const tile = PNG.sync.read(buffer);
+    const sourceWidth = Math.min(tile.width, width);
+    const sourceHeight = Math.min(tile.height, height - scrollY);
+    PNG.bitblt(tile, stitched, 0, 0, sourceWidth, sourceHeight, 0, scrollY);
+  }
+
+  await setRepeatedFixedElementsHidden(page, false);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  writeFileSync(outputPath, PNG.sync.write(stitched));
+}
+
+async function markRepeatedFixedElements(page, config) {
+  if (config.hideRepeatedFixedElements === false) return;
+
+  const maxHeightRatio = Math.max(0, Number(config.repeatedFixedElementMaxHeightRatio) || 0.25);
+  await page.evaluate(({ maxHeightRatio }) => {
+    const marker = 'data-visdiff-stitch-chrome';
+    document.querySelectorAll(`[${marker}]`).forEach((element) => {
+      element.removeAttribute(marker);
+    });
+
+    const maxHeight = window.innerHeight * maxHeightRatio;
+    const minWidth = window.innerWidth * 0.5;
+    for (const element of document.body.querySelectorAll('*')) {
+      const style = window.getComputedStyle(element);
+      if (!['fixed', 'sticky'].includes(style.position)) continue;
+
+      const rect = element.getBoundingClientRect();
+      if (rect.top > 4 || rect.height < 1 || rect.height > maxHeight || rect.width < minWidth) {
+        continue;
+      }
+
+      element.setAttribute(marker, '');
+    }
+  }, { maxHeightRatio });
+}
+
+async function setRepeatedFixedElementsHidden(page, hidden) {
+  await page.evaluate((hidden) => {
+    const id = 'visdiff-stitch-chrome-style';
+    const existing = document.getElementById(id);
+    if (!hidden) {
+      existing?.remove();
+      return;
+    }
+
+    if (existing) return;
+
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = '[data-visdiff-stitch-chrome] { visibility: hidden !important; }';
+    document.head.appendChild(style);
+  }, hidden);
+}
+
+function scrollPositions(totalHeight, viewportHeight) {
+  const maxY = Math.max(0, totalHeight - viewportHeight);
+  const positions = [];
+
+  for (let scrollY = 0; scrollY < maxY; scrollY += viewportHeight) {
+    positions.push(scrollY);
+  }
+
+  if (!positions.length || positions[positions.length - 1] !== maxY) {
+    positions.push(maxY);
+  }
+
+  return positions;
+}
+
+async function waitForScrollSettled(page, delayMs) {
+  if (delayMs) {
+    await page.waitForTimeout(delayMs);
+  }
+
+  await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
 }
 
 function compareImages(livePath, localPath, diffPath) {
