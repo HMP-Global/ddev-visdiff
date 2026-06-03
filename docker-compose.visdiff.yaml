@@ -13,7 +13,10 @@ services:
       HOME: /tmp
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
       DDEV_VISDIFF_BROWSER: firefox
-      DDEV_VISDIFF_LOCAL_URL: http://web
+      DDEV_HOSTNAME: ${DDEV_HOSTNAME:-}
+      DDEV_PRIMARY_URL: ${DDEV_PRIMARY_URL:-}
+      DDEV_PRIMARY_URL_WITHOUT_PORT: ${DDEV_PRIMARY_URL_WITHOUT_PORT:-}
+      DDEV_VISDIFF_LOCAL_URL: ${DDEV_PRIMARY_URL:-http://web}
       DDEV_VISDIFF_RUNNING: "1"
       PLATFORMSH_CLI_TOKEN: ${PLATFORMSH_CLI_TOKEN:-}
       npm_config_cache: /mnt/ddev-global-cache/npm

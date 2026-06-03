@@ -517,14 +517,35 @@ async function writeManagedFile(filePath, contents, force = false) {
 
 async function resolveLocalBaseUrl(config, cwd) {
   if (!config.localBaseUrl || config.localBaseUrl === 'auto:ddev') {
-    if (process.env.DDEV_VISDIFF_LOCAL_URL) {
-      return normalizeBaseUrl(process.env.DDEV_VISDIFF_LOCAL_URL, 'DDEV visdiff local URL');
+    const ddevUrl = firstPresentEnv([
+      'DDEV_VISDIFF_LOCAL_URL',
+      'DDEV_PRIMARY_URL',
+      'DDEV_PRIMARY_URL_WITHOUT_PORT'
+    ]);
+    if (ddevUrl) {
+      return normalizeBaseUrl(ddevUrl, 'DDEV URL');
+    }
+
+    if (process.env.DDEV_HOSTNAME) {
+      return normalizeBaseUrl(`https://${process.env.DDEV_HOSTNAME}`, 'DDEV hostname');
+    }
+
+    if (process.env.DDEV_VISDIFF_RUNNING) {
+      return normalizeBaseUrl('http://web', 'DDEV web service URL');
     }
 
     return resolveDdevUrl(cwd);
   }
 
   return normalizeBaseUrl(config.localBaseUrl, 'localBaseUrl');
+}
+
+function firstPresentEnv(names) {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return '';
 }
 
 function resolveDdevUrl(cwd) {

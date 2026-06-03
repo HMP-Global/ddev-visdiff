@@ -135,11 +135,11 @@ The DDEV add-on install is the preferred path for project use.
 }
 ```
 
-DDEV sets `auto:ddev` to `http://web` inside the `visdiff` service. Use `localBaseUrl` when you want to override that:
+DDEV sets `auto:ddev` to the project's primary HTTPS URL, such as `https://example.ddev.site`, inside the `visdiff` service. If DDEV does not expose a primary URL, visdiff falls back to `http://web`. Use `localBaseUrl` when you want to override that:
 
 ```json
 {
-  "localBaseUrl": "http://web"
+  "localBaseUrl": "https://example.ddev.site"
 }
 ```
 
@@ -147,7 +147,7 @@ Use `localHeaders` for ordinary request headers. Chromium does not allow overrid
 
 ```json
 {
-  "localBaseUrl": "http://web",
+  "localBaseUrl": "https://example.ddev.site",
   "localHeaders": {
     "X-Visdiff": "local"
   }
