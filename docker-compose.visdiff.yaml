@@ -1,0 +1,25 @@
+#ddev-generated
+services:
+  visdiff:
+    container_name: ddev-${DDEV_SITENAME}-visdiff
+    build:
+      context: ./visdiff
+      dockerfile: Dockerfile
+    image: ddev-${DDEV_SITENAME}-visdiff:latest
+    pull_policy: never
+    command: ["tail", "-f", "/dev/null"]
+    working_dir: /var/www/html
+    user: "${DDEV_UID}:${DDEV_GID}"
+    environment:
+      HOME: /tmp
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      DDEV_VISDIFF_LOCAL_URL: http://web
+      DDEV_VISDIFF_RUNNING: "1"
+      PLATFORMSH_CLI_TOKEN: ${PLATFORMSH_CLI_TOKEN:-}
+      npm_config_cache: /mnt/ddev-global-cache/npm
+    volumes:
+      - ../:/var/www/html:cached
+      - ddev-global-cache:/mnt/ddev-global-cache
+    labels:
+      com.ddev.site-name: ${DDEV_SITENAME}
+      com.ddev.approot: ${DDEV_APPROOT}

@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
+#ddev-generated
 
 ## Description: Run visdiff in the DDEV Playwright container
 ## Usage: visdiff [args]
 ## Example: "ddev visdiff run --prepare"
+## MutagenSync: true
 
 set -euo pipefail
 
-tool_dir="__VISDIFF_TOOL_DIR__"
+host_tool_dir="${DDEV_APPROOT}/.ddev/visdiff"
+container_tool_dir="/var/www/html/.ddev/visdiff"
 
-if [ ! -f "${tool_dir}/bin/visdiff.mjs" ]; then
-  echo "visdiff: ${tool_dir}/bin/visdiff.mjs was not found" >&2
+if [ ! -f "${host_tool_dir}/bin/visdiff.mjs" ]; then
+  echo "visdiff: ${host_tool_dir}/bin/visdiff.mjs was not found" >&2
   exit 1
 fi
 
@@ -45,4 +48,4 @@ printf "%s\n" "${platform_token}" | ddev exec --service visdiff --dir /var/www/h
   fi
 
   node "\${tool_dir}/bin/visdiff.mjs" "\$@"
-' bash "${tool_dir}" "$@"
+' bash "${container_tool_dir}" "$@"

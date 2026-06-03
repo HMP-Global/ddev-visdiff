@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// #ddev-generated
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';

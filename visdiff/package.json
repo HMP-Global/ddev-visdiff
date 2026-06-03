@@ -1,0 +1,21 @@
+{
+  "#ddev-generated": true,
+  "name": "@hmp-global/ddev-visdiff",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DDEV-focused visual regression checks for comparing a local site against production.",
+  "type": "module",
+  "bin": {
+    "ddev-visdiff": "bin/visdiff.mjs",
+    "visdiff": "bin/visdiff.mjs"
+  },
+  "dependencies": {
+    "pixelmatch": "^7.1.0",
+    "playwright": "1.60.0",
+    "pngjs": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

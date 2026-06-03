@@ -1,4 +1,4 @@
-# @hmp-global/ddev-visdiff
+# ddev-visdiff
 
 A lightweight visual regression CLI that compares a local DDEV site against a live site.
 
@@ -14,34 +14,21 @@ It is designed for DDEV-based local development:
 
 ## Setup
 
-Install it inside each DDEV project:
+Install the add-on from the DDEV project root:
 
 ```sh
-npm install --save-dev @hmp-global/ddev-visdiff
-```
-
-Install the DDEV integration from the site repository root:
-
-```sh
-npx ddev-visdiff install-ddev
+ddev add-on get HMP-Global/ddev-visdiff
 ddev restart
 ```
 
-The DDEV integration creates:
+The add-on creates:
 
 - `.ddev/docker-compose.visdiff.yaml`
+- `.ddev/visdiff/`
 - `.ddev/visdiff/Dockerfile`
 - `.ddev/commands/host/visdiff`
 
-The `visdiff` service builds from `mcr.microsoft.com/playwright:v1.60.0-noble`, so Chromium is part of DDEV instead of the host machine. The image also installs the Platform.sh CLI and MySQL/PostgreSQL clients for preparation commands.
-
-If you do not want host Node for setup, copy the files under `templates/ddev/` into `.ddev/` manually and replace `__VISDIFF_TOOL_DIR__` in `.ddev/commands/host/visdiff` with the project-relative tool path, such as `tools/visdiff`.
-
-You can also vendor this package inside the project, for example under `tools/visdiff/`, and run:
-
-```sh
-node tools/visdiff/bin/visdiff.mjs install-ddev
-```
+The `visdiff` service builds from `mcr.microsoft.com/playwright:v1.60.0-noble`, so Chromium is part of DDEV instead of the host machine. The image also installs the Platform.sh CLI and MySQL/PostgreSQL clients for preparation commands. The CLI runtime is vendored under `.ddev/visdiff/`, isolated from the application dependencies.
 
 From the site repository root, create a config:
 
@@ -73,6 +60,17 @@ Verify the tool from this package checkout:
 npm run check
 npm run smoke
 ```
+
+## npm Fallback
+
+The package is also published to npm for direct CLI development and manual installs:
+
+```sh
+npm install --save-dev @hmp-global/ddev-visdiff
+npx ddev-visdiff install-ddev
+```
+
+The DDEV add-on install is the preferred path for project use.
 
 ## Config
 

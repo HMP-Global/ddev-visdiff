@@ -1,0 +1,21 @@
+name: ddev-visdiff
+pre_install_actions: []
+project_files:
+  - docker-compose.visdiff.yaml
+  - commands/host/visdiff
+  - visdiff/Dockerfile
+  - visdiff/package.json
+  - visdiff/package-lock.json
+  - visdiff/bin/visdiff.mjs
+global_files: []
+post_install_actions:
+  - |
+    #ddev-description: Make visdiff commands executable
+    chmod +x commands/host/visdiff visdiff/bin/visdiff.mjs
+    echo 'Installed ddev-visdiff. Run "ddev restart" before using "ddev visdiff".'
+removal_actions:
+  - |
+    #ddev-description: Remove visdiff runtime dependency cache
+    rm -rf visdiff/node_modules visdiff/bin
+    rm -f visdiff/Dockerfile visdiff/package.json visdiff/package-lock.json
+    rmdir visdiff 2>/dev/null || true
