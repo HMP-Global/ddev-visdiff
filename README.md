@@ -93,13 +93,25 @@ The DDEV add-on install is the preferred path for project use.
     "enabled": false,
     "runBeforeCompare": false,
     "environment": "production",
-    "command": "platform",
-    "args": ["db:dump", "-e", "{environment}", "-y"]
+    "file": ".visdiff/latest.sql",
+    "import": true,
+    "importShell": "mysql --host=db --user=db --password=db db < {file}"
+  },
+  "stageFileProxy": {
+    "enabled": false,
+    "origin": "",
+    "originDir": "",
+    "drush": "./vendor/bin/drush",
+    "cacheRebuild": true
   },
   "prepareCommands": [],
   "threshold": 0.01,
   "waitUntil": "networkidle",
   "fullPage": true,
+  "waitForMedia": true,
+  "mediaTimeoutMs": 10000,
+  "freezeMedia": true,
+  "failOnMediaError": true,
   "hideSelectors": [],
   "ignoreSelectors": [],
   "headers": {},
@@ -142,11 +154,23 @@ Use `localHeaders` for ordinary request headers. Chromium does not allow overrid
 }
 ```
 
+## Browser Rendering
+
+The DDEV add-on uses Playwright Firefox by default because the bundled Chromium browser does not decode some MP4/H.264 video backgrounds on Linux/arm64. You can override the browser per project:
+
+```json
+{
+  "browser": "firefox"
+}
+```
+
+Supported values are `chromium`, `firefox`, and `webkit`. By default, visible video elements must load a frame before screenshots are captured. This prevents a page with a blank hero video from passing only because both live and local failed to render the same media.
+
 ## Production Content Refresh
 
 Preparation commands run inside the DDEV `visdiff` service.
 
-For most Platform.sh sites, set the environment name per site:
+For most Platform.sh Drupal sites, set the environment name per site:
 
 ```json
 {
@@ -154,23 +178,16 @@ For most Platform.sh sites, set the environment name per site:
     "enabled": true,
     "runBeforeCompare": true,
     "environment": "production",
-    "command": "platform",
-    "args": ["db:dump", "-e", "{environment}", "-y"]
+    "file": ".visdiff/latest.sql",
+    "import": true
   }
 }
 ```
 
-That creates a dump file in the working directory. For a full dump/import refresh against the DDEV database, use a shell preparation command:
+That runs `platform db:dump -e production -y --file .visdiff/latest.sql`, then imports that dump into DDEV's default database with:
 
-```json
-{
-  "databaseDump": {
-    "enabled": true,
-    "runBeforeCompare": true,
-    "environment": "production",
-    "shell": "platform db:dump -e {environment} -y --stdout | mysql --host=db --user=db --password=db db"
-  }
-}
+```sh
+mysql --host=db --user=db --password=db db < .visdiff/latest.sql
 ```
 
 For sites where the main production environment has another name:
@@ -185,22 +202,36 @@ For sites where the main production environment has another name:
 }
 ```
 
-If you prefer separate steps, use `prepareCommands`:
+If you only want to create the dump file and import it manually, disable import:
 
 ```json
 {
-  "prepareCommands": [
-    {
-      "name": "Refresh DDEV database from Platform",
-      "shell": "platform db:dump -e production -y --stdout | mysql --host=db --user=db --password=db db"
-    },
-    {
-      "name": "Download Platform files",
-      "shell": "platform mount:download --all --yes --quiet --project <project-id> --environment production --target=/var/www/html"
-    }
-  ]
+  "databaseDump": {
+    "enabled": true,
+    "environment": "production",
+    "import": false
+  }
 }
 ```
+
+For Drupal file assets, use the Stage File Proxy module instead of downloading all production files. Add it to the project first:
+
+```sh
+ddev composer require drupal/stage_file_proxy
+```
+
+Then configure `stageFileProxy` so prepare enables the module after importing the database:
+
+```json
+{
+  "stageFileProxy": {
+    "enabled": true,
+    "origin": "https://example.com"
+  }
+}
+```
+
+When `stageFileProxy.enabled` is true, prepare runs `./vendor/bin/drush pm:enable stage_file_proxy -y`, configures `stage_file_proxy.settings origin`, and rebuilds Drupal caches. If your Drush command lives somewhere else, set `stageFileProxy.drush`.
 
 The Platform CLI needs non-interactive auth inside the container, usually through `PLATFORMSH_CLI_TOKEN`.
 

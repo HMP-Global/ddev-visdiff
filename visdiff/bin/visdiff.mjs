@@ -18,7 +18,7 @@ const HOOK_END = '# <<< visdiff pre-push <<<';
 const LEGACY_HOOK_BEGIN = '# >>> visdiff post-commit >>>';
 const LEGACY_HOOK_END = '# <<< visdiff post-commit <<<';
 
-let chromium;
+let browsers;
 let PNG;
 let pixelmatch;
 
@@ -36,14 +36,26 @@ const defaultConfig = {
     enabled: false,
     runBeforeCompare: false,
     environment: 'production',
-    command: 'platform',
-    args: ['db:dump', '-e', '{environment}', '-y'],
+    file: '.visdiff/latest.sql',
+    import: true,
+    importShell: 'mysql --host=db --user=db --password=db db < {file}',
     shell: ''
+  },
+  stageFileProxy: {
+    enabled: false,
+    origin: '',
+    originDir: '',
+    drush: './vendor/bin/drush',
+    cacheRebuild: true
   },
   prepareCommands: [],
   threshold: 0.01,
   waitUntil: 'networkidle',
   fullPage: true,
+  waitForMedia: true,
+  mediaTimeoutMs: 10000,
+  freezeMedia: true,
+  failOnMediaError: true,
   hideSelectors: [],
   ignoreSelectors: [],
   headers: {},
@@ -169,10 +181,14 @@ async function runVisdiff(args) {
 
   await loadVisualDependencies();
 
-  const browser = await chromium.launch({
-    channel: config.browserChannel,
+  const browserName = resolveBrowserName(config);
+  const launchOptions = {
     headless: config.headless !== false
-  });
+  };
+  if (browserName === 'chromium' && config.browserChannel) {
+    launchOptions.channel = config.browserChannel;
+  }
+  const browser = await browsers[browserName].launch(launchOptions);
 
   const results = [];
   let failed = false;
@@ -431,10 +447,27 @@ async function loadConfig(configPath) {
   }
 
   const parsed = JSON.parse(await readFile(configPath, 'utf8'));
+  const parsedDatabaseDump = parsed.databaseDump || {};
   const config = {
     ...defaultConfig,
-    ...parsed
+    ...parsed,
+    databaseDump: {
+      ...defaultConfig.databaseDump,
+      ...parsedDatabaseDump
+    },
+    stageFileProxy: {
+      ...defaultConfig.stageFileProxy,
+      ...(parsed.stageFileProxy || {})
+    }
   };
+
+  if (
+    parsed.databaseDump
+    && parsedDatabaseDump.import === undefined
+    && (parsedDatabaseDump.shell || parsedDatabaseDump.command || parsedDatabaseDump.args)
+  ) {
+    config.databaseDump.import = false;
+  }
 
   if (!config.liveBaseUrl) {
     throw new Error('Config must include liveBaseUrl.');
@@ -448,7 +481,7 @@ async function readTemplate(templatePath) {
 }
 
 async function loadVisualDependencies() {
-  if (chromium && PNG && pixelmatch) {
+  if (browsers && PNG && pixelmatch) {
     return;
   }
 
@@ -458,9 +491,21 @@ async function loadVisualDependencies() {
     import('pixelmatch')
   ]);
 
-  chromium = playwrightModule.chromium;
+  browsers = {
+    chromium: playwrightModule.chromium,
+    firefox: playwrightModule.firefox,
+    webkit: playwrightModule.webkit
+  };
   PNG = pngModule.PNG;
   pixelmatch = pixelmatchModule.default;
+}
+
+function resolveBrowserName(config) {
+  const browserName = config.browser || process.env.DDEV_VISDIFF_BROWSER || 'chromium';
+  if (!['chromium', 'firefox', 'webkit'].includes(browserName)) {
+    throw new Error(`Unsupported browser: ${browserName}. Use chromium, firefox, or webkit.`);
+  }
+  return browserName;
 }
 
 async function writeManagedFile(filePath, contents, force = false) {
@@ -572,6 +617,7 @@ async function capturePage(browser, url, outputPath, viewport, config, headers =
       await page.waitForTimeout(config.extraWaitMs);
     }
 
+    await waitForMedia(page, config);
     await hideSelectors(page, config.hideSelectors || []);
     await maskSelectors(page, config.ignoreSelectors || []);
 
@@ -587,6 +633,128 @@ async function capturePage(browser, url, outputPath, viewport, config, headers =
     };
   } finally {
     await context.close();
+  }
+}
+
+async function waitForMedia(page, config) {
+  if (config.waitForMedia === false) return;
+
+  const media = await page.evaluate(async ({ timeoutMs, freezeMedia }) => {
+    const videos = Array.from(document.querySelectorAll('video'));
+
+    function isVisible(element) {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && Number(style.opacity) !== 0
+        && rect.width > 1
+        && rect.height > 1;
+    }
+
+    function snapshot(video, state) {
+      const rect = video.getBoundingClientRect();
+      return {
+        state,
+        readyState: video.readyState,
+        currentTime: Number(video.currentTime.toFixed(3)),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        src: video.currentSrc || video.querySelector('source')?.src || '',
+        error: video.error ? { code: video.error.code, message: video.error.message } : null
+      };
+    }
+
+    function waitForReady(video) {
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        return Promise.resolve(snapshot(video, 'ready'));
+      }
+      if (video.error) {
+        return Promise.resolve(snapshot(video, 'error'));
+      }
+
+      return new Promise((resolve) => {
+        let settled = false;
+        const cleanup = () => {
+          clearTimeout(timer);
+          video.removeEventListener('loadeddata', onReady);
+          video.removeEventListener('canplay', onReady);
+          video.removeEventListener('error', onError);
+        };
+        const settle = (state) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(snapshot(video, state));
+        };
+        const onReady = () => settle('ready');
+        const onError = () => settle('error');
+        const timer = setTimeout(() => settle('timeout'), timeoutMs);
+
+        video.addEventListener('loadeddata', onReady, { once: true });
+        video.addEventListener('canplay', onReady, { once: true });
+        video.addEventListener('error', onError, { once: true });
+      });
+    }
+
+    async function freeze(video) {
+      if (!freezeMedia || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+
+      video.pause();
+      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
+      const target = Math.min(0.25, Math.max(0, duration - 0.1));
+      if (Math.abs(video.currentTime - target) < 0.02) return;
+
+      await new Promise((resolve) => {
+        let settled = false;
+        const cleanup = () => {
+          clearTimeout(timer);
+          video.removeEventListener('seeked', onSeeked);
+          video.removeEventListener('error', onDone);
+        };
+        const onDone = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve();
+        };
+        const onSeeked = onDone;
+        const timer = setTimeout(onDone, 1000);
+
+        video.addEventListener('seeked', onSeeked, { once: true });
+        video.addEventListener('error', onDone, { once: true });
+
+        try {
+          video.currentTime = target;
+        } catch {
+          onDone();
+        }
+      });
+    }
+
+    const visibleVideos = videos.filter(isVisible);
+    const results = [];
+    for (const video of visibleVideos) {
+      const ready = await waitForReady(video);
+      if (ready.state === 'ready') {
+        await freeze(video);
+        results.push(snapshot(video, 'ready'));
+      } else {
+        results.push(ready);
+      }
+    }
+    return results;
+  }, {
+    timeoutMs: Number(config.mediaTimeoutMs) || 10000,
+    freezeMedia: config.freezeMedia !== false
+  });
+
+  const failed = media.filter((item) => item.state !== 'ready');
+  if (failed.length && config.failOnMediaError !== false) {
+    const details = failed
+      .map((item) => `${item.state} readyState=${item.readyState} ${item.src || 'unknown media'}`)
+      .join('; ');
+    throw new Error(`Visible media did not finish rendering before screenshot: ${details}`);
   }
 }
 
@@ -987,7 +1155,12 @@ function normalizePreparationCommands(config) {
 
   if (databaseDump.enabled) {
     const environment = databaseDump.environment || 'production';
-    const replacements = { environment };
+    const dumpFile = databaseDump.file || '.visdiff/latest.sql';
+    const replacements = { environment, file: dumpFile };
+    const shellReplacements = {
+      environment: shellQuote(environment),
+      file: shellQuote(dumpFile)
+    };
 
     if (databaseDump.shell) {
       commands.push({
@@ -995,14 +1168,65 @@ function normalizePreparationCommands(config) {
         shell: interpolate(databaseDump.shell, replacements)
       });
     } else {
+      const dumpDir = path.dirname(dumpFile);
+      if (dumpDir && dumpDir !== '.') {
+        commands.push({
+          name: 'Create database dump directory',
+          shell: `mkdir -p ${shellQuote(dumpDir)}`
+        });
+      }
+
       const command = databaseDump.command || 'platform';
-      const args = (databaseDump.args || ['db:dump', '-e', '{environment}', '-y'])
+      const args = (databaseDump.args || ['db:dump', '-e', '{environment}', '-y', '--file', '{file}'])
         .map((arg) => interpolate(arg, replacements));
 
       commands.push({
         name: databaseDump.name || `Platform DB dump (${environment})`,
         command,
         args
+      });
+
+      if (databaseDump.import !== false) {
+        commands.push({
+          name: databaseDump.importName || `Import Platform DB dump (${environment})`,
+          shell: interpolate(databaseDump.importShell || defaultConfig.databaseDump.importShell, shellReplacements)
+        });
+      }
+    }
+  }
+
+  const stageFileProxy = config.stageFileProxy || {};
+  if (stageFileProxy.enabled) {
+    const origin = stageFileProxy.origin || config.liveBaseUrl;
+    if (!origin) {
+      throw new Error('stageFileProxy.origin or liveBaseUrl must be set when stageFileProxy.enabled is true.');
+    }
+
+    const drush = stageFileProxy.drush || './vendor/bin/drush';
+    commands.push({
+      name: 'Enable Stage File Proxy',
+      command: drush,
+      args: ['pm:enable', 'stage_file_proxy', '-y']
+    });
+    commands.push({
+      name: 'Configure Stage File Proxy origin',
+      command: drush,
+      args: ['config:set', 'stage_file_proxy.settings', 'origin', origin, '-y']
+    });
+
+    if (stageFileProxy.originDir) {
+      commands.push({
+        name: 'Configure Stage File Proxy origin directory',
+        command: drush,
+        args: ['config:set', 'stage_file_proxy.settings', 'origin_dir', stageFileProxy.originDir, '-y']
+      });
+    }
+
+    if (stageFileProxy.cacheRebuild !== false) {
+      commands.push({
+        name: 'Rebuild Drupal caches',
+        command: drush,
+        args: ['cache:rebuild']
       });
     }
   }

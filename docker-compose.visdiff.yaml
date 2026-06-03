@@ -12,6 +12,7 @@ services:
     environment:
       HOME: /tmp
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      DDEV_VISDIFF_BROWSER: firefox
       DDEV_VISDIFF_LOCAL_URL: http://web
       DDEV_VISDIFF_RUNNING: "1"
       PLATFORMSH_CLI_TOKEN: ${PLATFORMSH_CLI_TOKEN:-}
