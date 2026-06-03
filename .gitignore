@@ -1,0 +1,9 @@
+node_modules/
+reports/
+.visdiff/reports/
+.visdiff/latest.sql
+.env
+.env.*
+.npmrc
+.DS_Store
+*.log

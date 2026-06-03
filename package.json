@@ -1,0 +1,44 @@
+{
+  "name": "ddev-visdiff",
+  "version": "0.1.0",
+  "description": "DDEV-focused visual regression checks for comparing a local site against production.",
+  "type": "module",
+  "files": [
+    "bin/",
+    "scripts/smoke.mjs",
+    "templates/",
+    "LICENSE",
+    "README.md"
+  ],
+  "bin": {
+    "ddev-visdiff": "./bin/visdiff.mjs",
+    "visdiff": "./bin/visdiff.mjs"
+  },
+  "scripts": {
+    "check": "node --check bin/visdiff.mjs && node bin/visdiff.mjs --help",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "pixelmatch": "^7.1.0",
+    "playwright": "1.60.0",
+    "pngjs": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/HMP-Global/ddev-visdiff.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HMP-Global/ddev-visdiff/issues"
+  },
+  "homepage": "https://github.com/HMP-Global/ddev-visdiff#readme",
+  "keywords": [
+    "ddev",
+    "visual-regression",
+    "playwright",
+    "pixelmatch"
+  ],
+  "license": "MIT"
+}
