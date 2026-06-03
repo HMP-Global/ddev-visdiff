@@ -5,7 +5,6 @@ services:
     build:
       context: ./visdiff
       dockerfile: Dockerfile
-    image: ddev-${DDEV_SITENAME}-visdiff:latest
     pull_policy: never
     command: ["tail", "-f", "/dev/null"]
     working_dir: /var/www/html
