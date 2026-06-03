@@ -1,4 +1,4 @@
-# ddev-visdiff
+# @hmp-global/ddev-visdiff
 
 A lightweight visual regression CLI that compares a local DDEV site against a live site.
 
@@ -17,7 +17,7 @@ It is designed for DDEV-based local development:
 Install it inside each DDEV project:
 
 ```sh
-npm install --save-dev ddev-visdiff
+npm install --save-dev @hmp-global/ddev-visdiff
 ```
 
 Install the DDEV integration from the site repository root:
