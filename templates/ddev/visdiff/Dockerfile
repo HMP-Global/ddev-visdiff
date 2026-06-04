@@ -14,6 +14,8 @@ RUN apt-get update \
     php-cli \
     php-curl \
     php-mbstring \
+    php-mysql \
+    php-pgsql \
     php-xml \
     php-zip \
     postgresql-client \

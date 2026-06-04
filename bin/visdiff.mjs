@@ -51,7 +51,7 @@ const defaultConfig = {
     modulePath: '',
     localModulePath: '.visdiff/modules/stage_file_proxy',
     repository: 'https://git.drupalcode.org/project/stage_file_proxy.git',
-    ref: '',
+    ref: '3.1.6',
     guardGit: true,
     allowOutsideDdev: false
   },
@@ -305,6 +305,7 @@ async function prepareSite(args) {
 
 async function runPreparation(config, cwd, args) {
   const commands = normalizePreparationCommands(config);
+  const env = environmentForPreparation(config);
 
   if (!commands.length) {
     if (!args.quiet) {
@@ -319,8 +320,8 @@ async function runPreparation(config, cwd, args) {
     }
 
     const result = command.shell
-      ? spawnSync('bash', ['-lc', `set -euo pipefail\n${command.shell}`], { cwd, stdio: 'inherit', shell: false })
-      : spawnSync(command.command, command.args, { cwd, stdio: 'inherit', shell: false });
+      ? spawnSync('bash', ['-lc', `set -euo pipefail\n${command.shell}`], { cwd, stdio: 'inherit', shell: false, env })
+      : spawnSync(command.command, command.args, { cwd, stdio: 'inherit', shell: false, env });
 
     if (result.error) {
       throw new Error(`Preparation failed for "${command.name}": ${result.error.message}`);
@@ -330,6 +331,29 @@ async function runPreparation(config, cwd, args) {
       throw new Error(`Preparation failed for "${command.name}" with exit code ${result.status}.`);
     }
   }
+}
+
+function environmentForPreparation(config) {
+  const env = { ...process.env };
+
+  if (env.DDEV_VISDIFF_RUNNING === '1') {
+    const docroot = config.stageFileProxy?.docroot || env.DDEV_DOCROOT || 'web';
+    env.IS_DDEV_PROJECT ||= 'true';
+    env.DDEV_APPROOT ||= '/var/www/html';
+    env.DDEV_COMPOSER_ROOT ||= '/var/www/html';
+    env.DDEV_DOCROOT ||= docroot;
+    env.DDEV_PROJECT ||= env.DDEV_SITENAME || '';
+    env.DDEV_PROJECT_TYPE ||= 'drupal9';
+    env.DDEV_DATABASE ||= 'mariadb:10.6';
+    env.DDEV_DATABASE_FAMILY ||= env.DDEV_DATABASE.includes('postgres') ? 'postgres' : 'mysql';
+    env.DRUSH_OPTIONS_URI ||= env.DDEV_PRIMARY_URL || (env.DDEV_HOSTNAME ? `https://${env.DDEV_HOSTNAME}` : '');
+    env.PGHOST ||= 'db';
+    env.PGDATABASE ||= 'db';
+    env.PGUSER ||= 'db';
+    env.PGPASSWORD ||= 'db';
+  }
+
+  return env;
 }
 
 async function installHook(args) {
@@ -1530,15 +1554,17 @@ function stageFileProxyInstallShell(stageFileProxy) {
   const moduleParent = path.posix.dirname(modulePath);
   const localModuleParent = path.posix.dirname(localModulePath);
   const symlinkTarget = path.posix.relative(moduleParent, localModulePath) || '.';
+  const refMarker = path.posix.join(localModulePath, '.visdiff-ref');
   const cloneArgs = ref
     ? `--depth=1 --branch ${shellQuote(ref)} ${shellQuote(repository)} ${shellQuote(localModulePath)}`
     : `--depth=1 ${shellQuote(repository)} ${shellQuote(localModulePath)}`;
 
   return [
     `mkdir -p ${shellQuote(moduleParent)} ${shellQuote(localModuleParent)}`,
-    `if [ ! -f ${shellQuote(path.posix.join(localModulePath, 'stage_file_proxy.info.yml'))} ]; then`,
+    `if [ ! -f ${shellQuote(path.posix.join(localModulePath, 'stage_file_proxy.info.yml'))} ] || [ "$(cat ${shellQuote(refMarker)} 2>/dev/null || true)" != ${shellQuote(ref)} ]; then`,
     `  rm -rf ${shellQuote(localModulePath)}`,
     `  git clone ${cloneArgs}`,
+    `  printf '%s\\n' ${shellQuote(ref)} > ${shellQuote(refMarker)}`,
     'fi',
     `if [ -e ${shellQuote(modulePath)} ] && [ ! -L ${shellQuote(modulePath)} ] && [ ! -f ${shellQuote(path.posix.join(modulePath, 'stage_file_proxy.info.yml'))} ]; then`,
     `  echo "Stage File Proxy target exists but is not the expected module: ${modulePath}" >&2`,

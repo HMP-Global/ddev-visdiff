@@ -107,6 +107,7 @@ The DDEV add-on install is the preferred path for project use.
     "docroot": "web",
     "localModulePath": ".visdiff/modules/stage_file_proxy",
     "repository": "https://git.drupalcode.org/project/stage_file_proxy.git",
+    "ref": "3.1.6",
     "guardGit": true
   },
   "prepareCommands": [],
@@ -240,7 +241,7 @@ For Drupal file assets, use the Stage File Proxy module instead of downloading a
 }
 ```
 
-When `stageFileProxy.enabled` is true, prepare clones `stage_file_proxy` into `.visdiff/modules/stage_file_proxy`, symlinks it into `web/modules/contrib/stage_file_proxy`, and adds both paths to `.git/info/exclude`. It then runs `./vendor/bin/drush pm:enable stage_file_proxy -y`, configures `stage_file_proxy.settings origin`, and rebuilds Drupal caches. If your Drush command or docroot lives somewhere else, set `stageFileProxy.drush` or `stageFileProxy.docroot`.
+When `stageFileProxy.enabled` is true, prepare clones `stage_file_proxy` release `3.1.6` into `.visdiff/modules/stage_file_proxy`, symlinks it into `web/modules/contrib/stage_file_proxy`, and adds both paths to `.git/info/exclude`. It then runs `./vendor/bin/drush pm:enable stage_file_proxy -y`, configures `stage_file_proxy.settings origin`, and rebuilds Drupal caches. If your Drush command or docroot lives somewhere else, set `stageFileProxy.drush` or `stageFileProxy.docroot`.
 
 The module is intentionally local-only. With `stageFileProxy.guardGit` enabled, visdiff refuses to run if staged or unpushed Git changes contain Stage File Proxy code, `composer.json`/`composer.lock` additions, or exported Drupal config such as `stage_file_proxy.settings.yml` or `core.extension.yml` entries.
 
