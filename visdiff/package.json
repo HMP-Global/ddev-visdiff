@@ -1,7 +1,7 @@
 {
   "#ddev-generated": true,
   "name": "@hmp-global/ddev-visdiff",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "DDEV-focused visual regression checks for comparing a local site against production.",
   "type": "module",

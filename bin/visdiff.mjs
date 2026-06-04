@@ -45,7 +45,15 @@ const defaultConfig = {
     origin: '',
     originDir: '',
     drush: './vendor/bin/drush',
-    cacheRebuild: true
+    cacheRebuild: true,
+    install: true,
+    docroot: 'web',
+    modulePath: '',
+    localModulePath: '.visdiff/modules/stage_file_proxy',
+    repository: 'https://git.drupalcode.org/project/stage_file_proxy.git',
+    ref: '',
+    guardGit: true,
+    allowOutsideDdev: false
   },
   prepareCommands: [],
   threshold: 0.01,
@@ -167,6 +175,7 @@ async function runVisdiff(args) {
   const artifactDir = path.join(runDir, 'artifacts');
 
   mkdirSync(artifactDir, { recursive: true });
+  assertNoStageFileProxyGitLeak(config, cwd);
 
   if (args.prepare || config.databaseDump?.runBeforeCompare) {
     await runPreparation(config, cwd, args);
@@ -290,6 +299,7 @@ async function prepareSite(args) {
   const cwd = process.cwd();
   const configPath = path.resolve(args.config || DEFAULT_CONFIG_FILE);
   const config = await loadConfig(configPath);
+  assertNoStageFileProxyGitLeak(config, cwd);
   await runPreparation(config, cwd, args);
 }
 
@@ -1431,9 +1441,20 @@ function normalizePreparationCommands(config) {
 
   const stageFileProxy = config.stageFileProxy || {};
   if (stageFileProxy.enabled) {
+    if (process.env.DDEV_VISDIFF_RUNNING !== '1' && stageFileProxy.allowOutsideDdev !== true) {
+      throw new Error('stageFileProxy can only run inside the DDEV visdiff service. Set stageFileProxy.allowOutsideDdev to true only for an intentional non-DDEV local environment.');
+    }
+
     const origin = stageFileProxy.origin || config.liveBaseUrl;
     if (!origin) {
       throw new Error('stageFileProxy.origin or liveBaseUrl must be set when stageFileProxy.enabled is true.');
+    }
+
+    if (stageFileProxy.install !== false) {
+      commands.push({
+        name: 'Install local-only Stage File Proxy module',
+        shell: stageFileProxyInstallShell(stageFileProxy)
+      });
     }
 
     const drush = stageFileProxy.drush || './vendor/bin/drush';
@@ -1496,6 +1517,155 @@ function normalizePreparationCommands(config) {
   }
 
   return commands;
+}
+
+function stageFileProxyInstallShell(stageFileProxy) {
+  const docroot = toPosixPath(stageFileProxy.docroot || 'web').replace(/\/+$/, '');
+  const modulePath = toPosixPath(
+    stageFileProxy.modulePath || path.posix.join(docroot, 'modules', 'contrib', 'stage_file_proxy')
+  );
+  const localModulePath = toPosixPath(stageFileProxy.localModulePath || '.visdiff/modules/stage_file_proxy');
+  const repository = stageFileProxy.repository || defaultConfig.stageFileProxy.repository;
+  const ref = stageFileProxy.ref || '';
+  const moduleParent = path.posix.dirname(modulePath);
+  const localModuleParent = path.posix.dirname(localModulePath);
+  const symlinkTarget = path.posix.relative(moduleParent, localModulePath) || '.';
+  const cloneArgs = ref
+    ? `--depth=1 --branch ${shellQuote(ref)} ${shellQuote(repository)} ${shellQuote(localModulePath)}`
+    : `--depth=1 ${shellQuote(repository)} ${shellQuote(localModulePath)}`;
+
+  return [
+    `mkdir -p ${shellQuote(moduleParent)} ${shellQuote(localModuleParent)}`,
+    `if [ ! -f ${shellQuote(path.posix.join(localModulePath, 'stage_file_proxy.info.yml'))} ]; then`,
+    `  rm -rf ${shellQuote(localModulePath)}`,
+    `  git clone ${cloneArgs}`,
+    'fi',
+    `if [ -e ${shellQuote(modulePath)} ] && [ ! -L ${shellQuote(modulePath)} ] && [ ! -f ${shellQuote(path.posix.join(modulePath, 'stage_file_proxy.info.yml'))} ]; then`,
+    `  echo "Stage File Proxy target exists but is not the expected module: ${modulePath}" >&2`,
+    '  exit 1',
+    'fi',
+    `if [ ! -e ${shellQuote(modulePath)} ]; then`,
+    `  ln -s ${shellQuote(symlinkTarget)} ${shellQuote(modulePath)}`,
+    'fi',
+    'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then',
+    '  mkdir -p .git/info',
+    '  touch .git/info/exclude',
+    `  grep -qxF ${shellQuote(`${localModulePath}/`)} .git/info/exclude || printf '\\n%s\\n' ${shellQuote(`${localModulePath}/`)} >> .git/info/exclude`,
+    `  grep -qxF ${shellQuote(modulePath)} .git/info/exclude || printf '%s\\n' ${shellQuote(modulePath)} >> .git/info/exclude`,
+    `  grep -qxF ${shellQuote(`${modulePath}/`)} .git/info/exclude || printf '%s\\n' ${shellQuote(`${modulePath}/`)} >> .git/info/exclude`,
+    'fi'
+  ].join('\n');
+}
+
+function assertNoStageFileProxyGitLeak(config, cwd) {
+  const stageFileProxy = config.stageFileProxy || {};
+  if (!stageFileProxy.enabled || stageFileProxy.guardGit === false || !isInsideGitWorkTree(cwd)) {
+    return;
+  }
+
+  const leaks = findStageFileProxyGitLeaks(cwd);
+  if (!leaks.length) return;
+
+  const details = leaks
+    .map((leak) => `- ${leak.path} (${leak.source})`)
+    .join('\n');
+  throw new Error(`Stage File Proxy is configured as local-only, but Git changes include stage_file_proxy artifacts:\n${details}\n\nDo not commit Stage File Proxy code, composer changes, or exported Drupal config. Unstage/remove those changes and rerun visdiff.`);
+}
+
+function findStageFileProxyGitLeaks(cwd) {
+  const candidates = new Map();
+
+  for (const filePath of gitLines(cwd, ['diff', '--cached', '--name-only', '--diff-filter=ACMR'])) {
+    candidates.set(`staged:${filePath}`, {
+      path: filePath,
+      source: 'staged',
+      ref: ':'
+    });
+  }
+
+  const upstream = gitOutput(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+  if (upstream.status === 0 && upstream.stdout.trim()) {
+    for (const filePath of gitLines(cwd, ['diff', '--name-only', '--diff-filter=ACMR', `${upstream.stdout.trim()}...HEAD`])) {
+      candidates.set(`unpushed:${filePath}`, {
+        path: filePath,
+        source: 'unpushed commit',
+        ref: 'HEAD'
+      });
+    }
+  }
+
+  const leaks = [];
+  for (const candidate of candidates.values()) {
+    if (isAllowedStageFileProxyPath(candidate.path)) continue;
+
+    if (stageFileProxyPathLooksDangerous(candidate.path)) {
+      leaks.push(candidate);
+      continue;
+    }
+
+    if (!stageFileProxyPathNeedsContentCheck(candidate.path)) continue;
+
+    const content = gitBlob(cwd, candidate.ref, candidate.path);
+    if (content.includes('stage_file_proxy') || content.includes('drupal/stage_file_proxy')) {
+      leaks.push(candidate);
+    }
+  }
+
+  return leaks;
+}
+
+function isInsideGitWorkTree(cwd) {
+  return gitOutput(cwd, ['rev-parse', '--is-inside-work-tree']).status === 0;
+}
+
+function gitLines(cwd, args) {
+  const result = gitOutput(cwd, args);
+  if (result.status !== 0) return [];
+  return result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+function gitOutput(cwd, args) {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8'
+  });
+
+  return {
+    status: result.status,
+    stdout: result.stdout || '',
+    stderr: result.stderr || ''
+  };
+}
+
+function gitBlob(cwd, ref, filePath) {
+  const revision = ref === ':' ? `:${filePath}` : `${ref}:${filePath}`;
+  const result = gitOutput(cwd, ['show', revision]);
+  return result.status === 0 ? result.stdout : '';
+}
+
+function isAllowedStageFileProxyPath(filePath) {
+  return filePath === '.visdiff.json' || filePath.startsWith('.visdiff/');
+}
+
+function stageFileProxyPathLooksDangerous(filePath) {
+  const normalized = toPosixPath(filePath);
+  return normalized.includes('/stage_file_proxy/')
+    || normalized.endsWith('/stage_file_proxy')
+    || normalized.endsWith('/stage_file_proxy.settings.yml')
+    || normalized === 'stage_file_proxy.settings.yml';
+}
+
+function stageFileProxyPathNeedsContentCheck(filePath) {
+  const basename = path.basename(filePath);
+  return basename === 'composer.json'
+    || basename === 'composer.lock'
+    || basename === 'core.extension.yml'
+    || basename.endsWith('.yml')
+    || basename.endsWith('.yaml');
+}
+
+function toPosixPath(filePath) {
+  return String(filePath).split(path.sep).join('/');
 }
 
 function headersFor(config, side) {

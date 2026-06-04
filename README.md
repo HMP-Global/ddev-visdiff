@@ -102,7 +102,12 @@ The DDEV add-on install is the preferred path for project use.
     "origin": "",
     "originDir": "",
     "drush": "./vendor/bin/drush",
-    "cacheRebuild": true
+    "cacheRebuild": true,
+    "install": true,
+    "docroot": "web",
+    "localModulePath": ".visdiff/modules/stage_file_proxy",
+    "repository": "https://git.drupalcode.org/project/stage_file_proxy.git",
+    "guardGit": true
   },
   "prepareCommands": [],
   "threshold": 0.01,
@@ -224,13 +229,7 @@ If you only want to create the dump file and import it manually, disable import:
 }
 ```
 
-For Drupal file assets, use the Stage File Proxy module instead of downloading all production files. Add it to the project first:
-
-```sh
-ddev composer require drupal/stage_file_proxy
-```
-
-Then configure `stageFileProxy` so prepare enables the module after importing the database:
+For Drupal file assets, use the Stage File Proxy module instead of downloading all production files. Configure `stageFileProxy` so prepare installs a local-only module copy, enables it in the local database after importing, and points it at production:
 
 ```json
 {
@@ -241,7 +240,9 @@ Then configure `stageFileProxy` so prepare enables the module after importing th
 }
 ```
 
-When `stageFileProxy.enabled` is true, prepare runs `./vendor/bin/drush pm:enable stage_file_proxy -y`, configures `stage_file_proxy.settings origin`, and rebuilds Drupal caches. If your Drush command lives somewhere else, set `stageFileProxy.drush`.
+When `stageFileProxy.enabled` is true, prepare clones `stage_file_proxy` into `.visdiff/modules/stage_file_proxy`, symlinks it into `web/modules/contrib/stage_file_proxy`, and adds both paths to `.git/info/exclude`. It then runs `./vendor/bin/drush pm:enable stage_file_proxy -y`, configures `stage_file_proxy.settings origin`, and rebuilds Drupal caches. If your Drush command or docroot lives somewhere else, set `stageFileProxy.drush` or `stageFileProxy.docroot`.
+
+The module is intentionally local-only. With `stageFileProxy.guardGit` enabled, visdiff refuses to run if staged or unpushed Git changes contain Stage File Proxy code, `composer.json`/`composer.lock` additions, or exported Drupal config such as `stage_file_proxy.settings.yml` or `core.extension.yml` entries.
 
 The Platform CLI needs non-interactive auth inside the container, usually through `PLATFORMSH_CLI_TOKEN`.
 
